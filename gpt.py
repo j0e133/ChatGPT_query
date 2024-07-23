@@ -15,7 +15,7 @@ class GPT:
     __slots__ = ('client')
 
     def __init__(self) -> None:
-        self.client = openai.OpenAI(
+        self.client=openai.OpenAI(
             api_key=OPENAI_API_KEY,
         )
 
@@ -38,7 +38,7 @@ class GPT:
                 prompt = f'I am trying to get a price per minute estimate for {treatment} in {location}. Using the given sources, find the pricing and duration of sessions, and calculate the price per minute. If a session isn\'t listed as {treatment}, don\'t include it. Don\'t include any prices that are for systems, I only want services. Don\'t include any repeated data points. Use at most 20 options, but if there are less thats ok.\nIn your reply, tell me ONLY:\nlist of - prices per minute (session length, session cost)\nAverage: the average.'
 
                 completion = self.client.chat.completions.create(
-                    messages = [
+                    messages=[
                         {
                             'role': 'system',
                             'content': 'Help the user parse through the provided sources to find pricing information. You can use outside knowledge about the general costs of areas to help fill in potential gaps in the data. Don\'t use markdown formatting'
@@ -52,10 +52,10 @@ class GPT:
                             'content': prompt
                         }
                     ],
-                    model = 'gpt-4o',
-                    temperature = 0.3,
-                    n = 1,
-                    max_tokens = 750
+                    model='gpt-4o',
+                    temperature=0.3,
+                    n=1,
+                    max_tokens=750
                 )
 
                 reply = str(completion.choices[0].message.content)

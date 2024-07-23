@@ -1,8 +1,8 @@
-from constants import ROOT_DIR
+from constants import DATA_DIR
 
 
 
-LOG_DIR = f'{ROOT_DIR}/data/logs'
+LOG_DIR = f'{DATA_DIR}/logs'
 
 
 

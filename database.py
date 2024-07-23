@@ -4,11 +4,11 @@ Module for accessing and saving to the database file of saved search data
 
 import json
 
-from constants import ROOT_DIR
+from constants import DATA_DIR
 
 
 
-DATABASE_PATH = f'{ROOT_DIR}/data/search_save_data.json'
+DATABASE_PATH = f'{DATA_DIR}/search_save_data.json'
 
 Database = dict[str, dict[str, float]]
 

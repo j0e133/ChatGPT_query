@@ -1,5 +1,6 @@
 import threading
 import tkinter as tk
+import pyperclip
 
 from tkinter import messagebox
 from queue import Queue
@@ -115,8 +116,11 @@ def get_pricing():
                         icon='info',
                         type='ok',
                         title='Pricing Information',
-                        message=f'Pricing in {location}:\n{'\n'.join(f'{therapy}: {f'${price:.2f}' if price > 0 else 'N/A'}' for therapy, price in prices.items())}'
+                        message=f'Pricing in {location}:\n\n{'\n'.join(f'{treatment}: {f'${price:.2f}' if price > 0 else 'N/A'}' for treatment, price in prices.items())}\n\nAutomatically copied so you can paste into a spreadsheet'
                     )
+
+                    # copy the output to clipboard. Able to be pasted into a spreadsheet
+                    pyperclip.copy('\n'.join(f'{treatment}\t{price}' for treatment, price in prices.items()))
 
                 reply.show()
 
