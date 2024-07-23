@@ -32,3 +32,4 @@ TREATMENTS = [
     "Hyperbaric Oxygen Therapy",
     "Hocatt Treatment"
 ]
+

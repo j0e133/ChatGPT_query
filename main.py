@@ -32,7 +32,7 @@ title_label.place(
 )
 
 # Add text boxes
-old_zipcode = ''
+old_zipcode = tk.StringVar()
 zipcode = tk.StringVar()
 zipcode_label = tk.Label(
     window,
@@ -56,7 +56,7 @@ zipcode_entry.place(
     y = 150 + 2
 )
 
-old_city = ''
+old_city = tk.StringVar()
 city = tk.StringVar()
 city_label = tk.Label(
     window,
@@ -155,15 +155,15 @@ query_button.bind('<Leave>', _leave)
 update_city = False
 
 def zipcode_update(*_) -> None:
-    global update_city, old_zipcode
+    global update_city
 
     zipcode_str = zipcode.get()
 
     if len(zipcode_str) > 5 or not zipcode_str.isdigit() and not zipcode_str == '':
-        zipcode.set(old_zipcode)
+        zipcode.set(old_zipcode.get())
 
     else:
-        old_zipcode = zipcode_str
+        old_zipcode.set(zipcode_str)
 
         if len(zipcode_str) == 5:
             update_city = True
@@ -172,15 +172,17 @@ def zipcode_update(*_) -> None:
 
 
 def city_update(*_) -> None:
-    global update_city, old_city
+    global update_city
 
-    if not all(char.isalpha() or char in ', ' for char in city.get()):
-        city.set(old_city)
+    city_str = city.get()
+
+    if not all(char.isalpha() or char in ', ' for char in city_str):
+        city.set(old_city.get())
 
     else:
-        old_city = city.get()
+        old_city.set(city_str)
 
-        query_button['state'] = 'normal' if city.get() else 'disabled'
+        query_button['state'] = 'normal' if city_str else 'disabled'
 
         if not update_city:
             zipcode.set('')

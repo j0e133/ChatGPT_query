@@ -1,10 +1,10 @@
 # ChatGPT Query
 
-## Usage
+### Usage
 
 Uses Google's Custom Search Engine and OpenAI's GPT-4o to search the internet for pricing information for different services and extrace the relavant information
 
-## Requirements
+### Requirements
 
 Python 3.12 (probably works on versions before 3.12, but not tested)
 

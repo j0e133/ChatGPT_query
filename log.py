@@ -1,3 +1,7 @@
+'''
+Module for logging
+'''
+
 from constants import DATA_DIR
 
 
