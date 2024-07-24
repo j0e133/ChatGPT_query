@@ -11,13 +11,13 @@ if getattr(sys, 'frozen', False):
     # If the application is run as an exe
     ROOT_DIR = os.path.dirname(sys.executable)
 
-    DATA_DIR = f'{ROOT_DIR}/data'
+    DATA_DIR = os.path.join(ROOT_DIR, 'data')
 
 else:
     # If the application is run as a script (the 'data' folder is in a 'dist' folder that PyInstaller creates)
     ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-    DATA_DIR = f'{ROOT_DIR}/dist/data'
+    DATA_DIR = os.path.join(ROOT_DIR, 'dist', 'data')
 
 
 COST_PER_INPUT_TOKEN = 5 / 1_000_000

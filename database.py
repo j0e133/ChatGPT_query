@@ -2,13 +2,14 @@
 Module for accessing and saving to the database file of saved search data
 '''
 
+import os
 import json
 
 from constants import DATA_DIR
 
 
 
-DATABASE_PATH = f'{DATA_DIR}/search_save_data.json'
+DATABASE_PATH = os.path.join(DATA_DIR, 'search_save_data.json')
 
 
 
