@@ -1,13 +1,52 @@
 '''
-Module for querying OpenAI's GPT-4o model to parse through data and extract pricing
+Module for querying OpenAI's GPT-4o model to parse through data and extract pricing information.
 '''
 
-import openai
-import web_scraper
-import re
+from typing import Sequence, Optional
 
-from constants import OPENAI_API_KEY, COST_PER_INPUT_TOKEN, COST_PER_OUTPUT_TOKEN, GPT_ENCODING, TREATMENTS
+import openai
+from openai import RateLimitError
+from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
+from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
+from pydantic import BaseModel, Field
+
+import web_scraper
+from constants import *
+from exceptions import retry_on_exception, retry_on_connection_error
 from log import log
+from treatments import Treatment
+
+
+
+class Sample(BaseModel):
+    provider: Optional[str] = Field(description='The company that provides the treatment. Can be either the name/number of the source or the name of the company in a source. Should be "GPT" if the treatment isn\'t from a source, but from general knowledge of prices in the area.')
+    duration: float = Field(description='The length of the treatment in minutes.')
+    cost: float = Field(description='The cost of the treatment.')
+    package_count: int = Field(description='The number of treatments in a package. Should be 1 if the treatment isn\'t a package.')
+
+
+
+class TreatmentPrices(BaseModel):
+    treatment: str = Field(description='The name of the treatment.')
+    samples: list[Sample] = Field(description='Samples of treatments from providers in the sources.')
+
+    def get_pricing(self) -> float:
+        '''
+        Returns the average price per minute of the samples
+        '''
+
+        total = 0.0
+
+        for treatment in self.samples:
+            if treatment.duration and treatment.package_count:
+                ppm = (treatment.cost / treatment.duration / treatment.package_count)
+
+                if ppm <= 12.5:
+                    total += ppm
+
+        average = total / len(self.samples)
+
+        return average
 
 
 
@@ -15,83 +54,59 @@ class GPT:
     __slots__ = ('client')
 
     def __init__(self) -> None:
-        self.client=openai.OpenAI(
-            api_key=OPENAI_API_KEY,
+        self.client=openai.OpenAI(api_key=OPENAI_API_KEY)
+
+    @retry_on_exception(
+        RateLimitError,
+        max_retries=60,
+        retry_after=5,
+        retry_after_exponent=1.75
+    )
+    def get_completion(self, messages: Sequence[ChatCompletionMessageParam]) -> ParsedChatCompletion[TreatmentPrices]:
+        completion = self.client.beta.chat.completions.parse(
+            model = MODEL_NAME,
+            messages = messages,
+            response_format=TreatmentPrices,
+            n = 1,
+            temperature = MODEL_TEMPERATURE,
+            max_tokens = MAX_OUTPUT_TOKENS_PER_QUERY,
         )
 
-    def query_prices_per_minute(self, location: str) -> dict[str, float] | None:
-        sources = set()
+        return completion
 
-        for treatment in TREATMENTS:
-            sources |= set(web_scraper.get_search_price_data(f'{treatment} "pricing" {location}'))
+    @retry_on_connection_error(default_value=0.0)
+    def query_treatment_pricing(self, city: str, treatment: Treatment) -> float:
+        keywords = SEARCH_KEYWORDS | treatment.keywords
 
-        all_sources = 'SOURCES:\n\n' + '\n\nEND OF SOURCE\n\n'.join(sources) + '\n\nEND OF SOURCES'
+        sources = web_scraper.get_search_data(f'{treatment.name} "pricing" {city}', keywords, 8)
 
-        tokens = self.get_tokens(all_sources)
+        tokens = sum(map(token_count, sources))
 
-        if tokens <= 25_000:
-            prices: dict[str, float] = {}
+        if tokens <= MAX_INPUT_TOKENS_PER_QUERY:
+            source_messages = [{'role': 'user', 'content': f'## Source {i}:\n\n{source}'} for i, source in enumerate(sources)]
 
-            cost = 0
+            messages = [SYSTEM_MESSAGE] + source_messages + [{'role': 'user', 'content': treatment.get_prompt(city)}]
 
-            for treatment in TREATMENTS:
-                prompt = f'I am trying to get a price per minute estimate for {treatment} in {location}. Using the given sources, find the pricing and duration of sessions, and calculate the price per minute. If a session isn\'t listed as {treatment}, don\'t include it. Don\'t include any prices that are for systems, I only want services. Don\'t include any repeated data points. Use at most 20 options, but if there are less thats ok.\nIn your reply, tell me ONLY:\nlist of - prices per minute (session length, session cost)\nAverage: the average.'
+            completion = self.get_completion(messages) # type: ignore
 
-                completion = self.client.chat.completions.create(
-                    messages=[
-                        {
-                            'role': 'system',
-                            'content': 'Help the user parse through the provided sources to find pricing information. You can use outside knowledge about the general costs of areas to help fill in potential gaps in the data. Don\'t use markdown formatting'
-                        },
-                        {
-                            'role': 'user',
-                            'content': all_sources
-                        },
-                        {
-                            'role': 'user',
-                            'content': prompt
-                        }
-                    ],
-                    model='gpt-4o',
-                    temperature=0.3,
-                    n=1,
-                    max_tokens=750
-                )
+            reply = completion.choices[0].message.parsed
 
-                reply = str(completion.choices[0].message.content)
-                tokens = completion.usage
+            if reply is None:
+                return 0.0
 
-                cost += tokens.prompt_tokens * COST_PER_INPUT_TOKEN       # type: ignore
-                cost += tokens.completion_tokens * COST_PER_OUTPUT_TOKEN  # type: ignore
+            tokens = completion.usage
+            query_cost = tokens.prompt_tokens * COST_PER_INPUT_TOKEN + tokens.completion_tokens * COST_PER_OUTPUT_TOKEN # type: ignore
 
-                log(reply + '\n\n', 'gpt_responses.txt')
+            log(f'Query cost: ${query_cost:.3f}\n{reply.model_dump_json(indent=2)}\n\n', 'gpt_responses.txt')
 
-                prices[treatment] = extract_pricing(reply)
+            price_per_minute = reply.get_pricing()
 
-            log(f'Query cost: ${cost:.3f}\n\n\n', 'gpt_responses.txt')
+            return price_per_minute
 
-            return prices
-
-        else:
-            log(f'Too many tokens for request: {tokens}\n\n\n', 'gpt_responses.txt')
-
-    def get_tokens(self, message: str) -> int:
-        return len(GPT_ENCODING.encode(message))
+        return 0.0
 
 
 
-def extract_pricing(reply: str) -> float:
-    '''
-    get the price per minute value out of a GPT reply.
-    '''
-
-    for line in reply.lower().splitlines():
-        if 'average:' in line: # extract the average price
-            ppm = re.findall(r"[-+]?(?:\d*\.*\d+)", line)
-
-            if ppm:
-                return float(ppm[0])
-
-    # no pricing information available
-    return -1.0
+def token_count(string: str) -> int:
+    return len(GPT_ENCODING.encode(string))
 

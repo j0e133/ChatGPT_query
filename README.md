@@ -6,13 +6,17 @@ Uses Google's Custom Search Engine and OpenAI's GPT-4o to search the internet fo
 
 ### Requirements
 
-Python 3.12 (probably works on versions before 3.12, but not tested)
+Python 3.12 (likely works on versions before 3.12, but not tested)
 
-Several libraries are used:
+Several 3rd party libraries are used:
 
-- tkinter - GUI (should be included with python)
+- bs4 - html to text parser
 - openai - interface for OpenAI's GPT models
+- pydantic - data validation
+- pyperclip - copies information to the clipboard
+- requests - requests information from the internet
 - tiktoken - text tokenizer for OpenAI's models
 - zipcodes - provides city and state information for US zipcodes
-- pyperclip - copies information to the clipboard
 
+
+###### Made by Joe Hopkins

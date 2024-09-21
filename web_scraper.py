@@ -2,10 +2,12 @@
 Module conatining functions to scrape the web, including search and url parsing
 '''
 
+from collections import deque
+
+from bs4 import BeautifulSoup
 import requests
 
-from constants import CUSTOM_SEARCH_API_KEY, CUSTOM_SEARCH_ENGINE_ID, USER_AGENT, GPT_ENCODING
-from bs4 import BeautifulSoup
+from constants import *
 from log import log
 
 
@@ -56,33 +58,13 @@ def search(query: str, num_urls: int, page: int = 1) -> list[str]:
 
             return []
 
-    log(query + '\n' + '\n'.join(urls) + '\n\n', 'searches.txt')
+    log(f'{query}\n - {'\n - '.join(urls)}\n\n', 'searches.txt')
 
     return urls
 
 
-def get_website_price_data(url: str, context: int = 7) -> str:
-    '''
-    Return the text contained in a website url.
-    '''
 
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=5)
-    except:
-        return ''
-
-    if response.status_code == 200:
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        return extract_prices(soup.get_text(separator='\n', strip=True), context)
-
-    else:
-        log(f'Website access failed: error code {response.status_code} {response.reason}', 'searches.txt')
-
-        return ''
-
-
-def get_search_price_data(search_term: str, min_pages: int = 5, context: int = 7, max_tokens: int = 4_750) -> list[str]:
+def get_search_data(search_term: str, keywords: dict[str, int], min_pages: int) -> list[str]:
     '''
     Return `get_website_price_data()` for each url when `search_term` is searched.
     '''
@@ -90,12 +72,12 @@ def get_search_price_data(search_term: str, min_pages: int = 5, context: int = 7
     urls = search(search_term, 10)
 
     output = []
-    tokens_left = max_tokens
+    tokens_left = MAX_INPUT_TOKENS_PER_QUERY - 250
     pages_left = min_pages
     page_token_limit = int(tokens_left * pages_left ** -0.75)
 
     for url in urls:
-        price_data = get_website_price_data(url, context)
+        price_data = get_website_data(url, keywords, 1)
 
         token_ids = GPT_ENCODING.encode(price_data)
         tokens = len(token_ids)
@@ -116,68 +98,95 @@ def get_search_price_data(search_term: str, min_pages: int = 5, context: int = 7
         page_token_limit = int(tokens_left * pages_left ** -0.75)
 
         # end if max_tokens is reached
-        if tokens_left == 0:
+        if tokens_left <= 0:
             break
 
     return output
 
 
-def clean_text(text: str) -> str:
+
+def get_website_data(url: str, keywords: dict[str, int], duplicate_dist: int) -> str:
     '''
-    Remove unnessecary whitespace, including empty indentations and leading and trailing spaces in each line.
+    Return the text contained in a website url.
     '''
 
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=5)
+    except:
+        return ''
+
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        return extract_keywords(soup.get_text(separator='\n', strip=True), keywords, duplicate_dist)
+
+    else:
+        log(f'Website access failed: error code {response.status_code} {response.reason}', 'searches.txt')
+
+        return ''
+
+
+
+def extract_keywords(text: str, keywords: dict[str, int], duplicate_dist: int) -> str:
+    '''
+    Remove unnessecary whitespace and then extract the lines with `strings` keys in them, along with `strings` values surrounding lines.
+    '''
+
+    # lowercase all of the strings for comparison
+    strings = {string.lower(): context for string, context in keywords.items()}
+
+    lines = clean_text(text, duplicate_dist).splitlines(keepends=True)
+    line_indices = set()
     output = ''
-    whitespace = False
 
-    for line in text.splitlines():
-        if line.isspace() or not line:
-            if not whitespace:
-                output += '\n'
-                whitespace = True
+    # get lines with money values in them (costs)
+    for i, line in enumerate(lines):
+        line_compare = line.lower()
+        j = 0
 
-        else:
-            # remove all non-ascii characters from the line
-            clean_line = ''
+        # get the maximum context size to check
+        for string, context in strings.items():
+            j = max(j, context * (string in line_compare))
 
-            for character in line:
-                if character.isascii():
-                    clean_line += character
+        # add the lines and context
+        if j:
+            line_indices.update(range(i - j, i + j + 1))
 
-            # clip line if it is over 100 tokens
-            tokens = GPT_ENCODING.encode(clean_line)
-
-            if len(tokens) > 100:
-                clean_line = GPT_ENCODING.decode(tokens[:100])
-
-            # add the line to the output
-            output += clean_line
-            output += '\n'
-            whitespace = False
+        if i in line_indices:
+            output += line
 
     return output
 
 
-def extract_prices(text: str, context: int = 7) -> str:
+
+def clean_text(text: str, duplicate_dist: int) -> str:
     '''
-    Remove unnessecary whitespace and then extract the lines with prices in them, along with `context` surrounding lines.
+    Remove unnessecary whitespace, including empty indentations and leading and trailing spaces in each line.
+
+    Also removes duplicate lines within `duplicate_lines` lines of the first one seen.
     '''
 
-    lines = clean_text(text).splitlines()
-    price_lines = set()
+    output = ''
+    lines: deque[str] = deque(maxlen=duplicate_dist)
 
-    # get lines with money values in them (costs)
-    for i in range(len(lines)):
-        if '$' in lines[i]:
-            price_lines.add(i)
+    for line in text.splitlines(keepends=True):
+        if line and not line.isspace():
+            # remove all non-ascii characters from the line
+            ascii_line = ''.join(filter(str.isascii, line))
 
-    # add the lines surrounding those with costs for context
-    for i in price_lines.copy():
-        for j in range(-context, context):
-            price_lines.add(i + j)
-    
-    # get all of the lines
-    output = '\n'.join(line for i, line in enumerate(lines) if i in price_lines)
+            # clip line if it is over 100 tokens
+            tokens = GPT_ENCODING.encode(ascii_line)
+
+            if len(tokens) > 100:
+                ascii_line = GPT_ENCODING.decode(tokens[:100])
+
+            lowercase_line = ascii_line.lower()
+
+            # skip if it is a duplicate
+            if lowercase_line not in lines:
+                output += ascii_line
+
+                lines.append(lowercase_line)
 
     return output
 

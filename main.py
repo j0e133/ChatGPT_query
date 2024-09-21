@@ -1,204 +1,284 @@
-import threading
 import tkinter as tk
+import tkinter.messagebox as messagebox
+from threading import Thread
+from typing import Callable, Literal, Any
+
 import pyperclip
 
-from tkinter import messagebox
-from queue import Queue
+from constants import *
 from pricing import PriceManager
+from treatments import Treatment, TREATMENTS
 from zipcode import Zipcode
 
 
 
-# Create the main window
-window = tk.Tk()
-window.title('Price Estimator')
-window.protocol('WM_DELETE_WINDOW', window.destroy)
-window.resizable(False, False)
-window.geometry(f'{600}x{300}+{int(0.5 * (window.winfo_screenwidth() - 600))}+{int(0.5 * (window.winfo_screenheight() - 300))}')
-window.configure(background='gray80')
+def create_button(master: tk.Tk, text: str, command: Callable[[], Any], *, fontsize: int = 12, state: Literal['normal', 'active', 'disabled'] = 'normal') -> tk.Button:
+    button = tk.Button(
+        master,
+        text=text,
+        font=(FONT, fontsize),
+        command=command,
+        state=state,
+        **BUTTON_COLORS
+    )
 
+    def enter(_): button['background'] = ELEMENT_HOVER_COLOR
+    def leave(_): button['background'] = ELEMENT_COLOR
+
+    button.bind('<Enter>', enter)
+    button.bind('<Leave>', leave)
+
+    return button
+
+
+
+def submit_active() -> bool:
+    valid_city = Zipcode.is_city(city_str.get())
+
+    treatment_selected = any(treatment_checkbox.get() for _, treatment_checkbox in treatment_checkboxes)
+
+    return valid_city and treatment_selected
+
+
+
+def zipcode_update(*_) -> None:
+    zipcode = zipcode_str.get()
+
+    if len(zipcode) > 5 or not zipcode.isdigit() and not zipcode == '':
+        zipcode_str.set(_old_zipcode_str.get())
+
+    else:
+        _old_zipcode_str.set(zipcode)
+
+        if len(zipcode) == 5:
+            _update_city.set(True)
+
+            city_str.set(Zipcode(zipcode).city)
+
+
+
+def city_update(*_) -> None:
+    city = city_str.get()
+
+    # only allow letters, spaces, and some punctuation in city names
+    if not all(char.isalpha() or char in '\'-, ' for char in city):
+        city_str.set(_old_city_str.get())
+
+    else:
+        _old_city_str.set(city)
+
+        query_button['state'] = 'normal' if submit_active() else 'disabled'
+
+        if not _update_city.get():
+            zipcode_str.set('')
+
+        _update_city.set(False)
+
+
+
+def checkbox_update(*_) -> None:
+    query_button['state'] = 'normal' if submit_active() else 'disabled'
+
+
+
+def get_pricing():
+    city = city_str.get()
+
+    treatments = [treatment for treatment, checkbox_state in treatment_checkboxes if checkbox_state.get()]
+
+    ok = messagebox.askokcancel('Warning', f'Querying for {len(treatments)} treatments can cost up to ${len(treatments) * 0.05:.2f}\nAre you sure you want to get pricing in "{city}"\n(Runs in the background)', icon='warning')
+
+    if ok:
+        # asynchronously search and query GPT for the pricing information and automatically open a window with the results
+        thread = Thread(target=pricing_worker, args=(city, treatments, bool(update_state.get())))
+        thread.start()
+
+
+
+def pricing_worker(city: str, treatments: list[Treatment], update_database: bool) -> None:
+    prices = price_manager.get_prices_per_minute(city, treatments, update_database)
+
+    # display pricing self
+    if prices:
+        sorted_prices = sorted(prices.items(), key=lambda x: x[0])
+
+        reply = messagebox.Message(
+            icon='info',
+            type='ok',
+            title='Pricing Information',
+            message=f'Pricing in {city}:\n\n{'\n'.join(f'{treatment}: ${price:.2f}' for treatment, price in sorted_prices)}\n\nAutomatically copied so you can paste into a spreadsheet'
+        )
+
+        # copy the output to clipboard. Able to be pasted into a spreadsheet
+        pyperclip.copy(f'Treatment\tPrice\n' + '\n'.join(f'{treatment}\t${price:.2f}' for treatment, price in sorted_prices))
+
+    else:
+        reply = messagebox.Message(
+            icon='error',
+            type='ok',
+            title='Error',
+            message=f'An error occured, couldn\'t get the pricing in "{city}"'
+        )
+
+    reply.show()
+
+
+
+window = tk.Tk()
+
+window.title('Price Estimator')
+
+window.protocol('WM_DELETE_WINDOW', window.destroy)
+
+size = (475, 430)
+
+window.geometry(f'{size[0]}x{size[1]}+{int(0.5 * (window.winfo_screenwidth() - size[0]))}+{int(0.5 * (window.winfo_screenheight() - size[1]))}')
+window.resizable(False, False)
+
+window.configure(background=BACKGROUND_COLOR)
 
 # Add title
 title_label = tk.Label(
     window,
     text='Price Estimator',
-    font=('Sylfaen', 50, 'bold'),
-    foreground='black',
-    background='gray80'
+    font=(FONT, 30, 'bold'),
+    **LABEL_COLORS
 )
 title_label.place(
-    x = (600 - title_label.winfo_reqwidth()) * 0.5,
+    x = (size[0] - title_label.winfo_reqwidth()) * 0.5,
     y = 20
 )
 
 # Add text boxes
-old_zipcode = tk.StringVar()
-zipcode = tk.StringVar()
+entry_y = 20 + title_label.winfo_reqheight() + 17
+
+zipcode_str = tk.StringVar()
+_old_zipcode_str = tk.StringVar(value=zipcode_str.get())
+
 zipcode_label = tk.Label(
     window,
     text='Zip code:',
-    font=('Sylfaen', 15),
+    font=DEFAULT_FONT,
     foreground='black',
     background='gray80'
 )
-zipcode_label.place(x=48, y=150)
 zipcode_entry = tk.Entry(
     window,
-    textvariable=zipcode,
-    font=('Sylfaen', 15),
+    textvariable=zipcode_str,
+    font=DEFAULT_FONT,
     foreground='black',
     background='gray75',
     justify='center',
     width=7,
 )
+zipcode_label.place(
+    x = 30,
+    y = entry_y
+)
 zipcode_entry.place(
-    x = 48 + zipcode_label.winfo_reqwidth() + 5,
-    y = 150 + 2
+    x = 30 + 68 + 5,
+    y = entry_y + 2
 )
 
-old_city = tk.StringVar()
-city = tk.StringVar()
+city_str = tk.StringVar()
+_old_city_str = tk.StringVar(value=city_str.get())
+_update_city = tk.BooleanVar(value=False)
+
 city_label = tk.Label(
     window,
     text='City:',
-    font=('Sylfaen', 15),
+    font=DEFAULT_FONT,
     foreground='black',
     background='gray80'
 )
-city_label.place(x=241, y=150)
 city_entry = tk.Entry(
     window,
-    textvariable=city,
-    font=('Sylfaen', 15),
+    textvariable=city_str,
+    font=DEFAULT_FONT,
     foreground='black',
     background='gray75',
     justify='center',
     width=25,
 )
+city_label.place(
+    x = 30 + 68 + 5 + 65 + 20,
+    y = entry_y
+)
 city_entry.place(
-    x = 241 + city_label.winfo_reqwidth() + 5,
-    y = 150 + 2
+    x = 30 + 68 + 5 + 65 + 20 + 39 + 5,
+    y = entry_y + 2
 )
 
-# function to get pricing
-price_manager = PriceManager()
+# Add treatment options
+checkbox_y = entry_y + city_entry.winfo_reqheight() + 27
+checkboxes: list[tk.Checkbutton] = []
+checkbox_states: list[tk.IntVar] = []
 
-def get_pricing():
-    location = city.get()
+for i, treatment in enumerate(TREATMENTS):
+    checkbox_state = tk.IntVar(value=0)
+    checkbox = tk.Checkbutton(
+        window,
+        variable=checkbox_state,
+        text=treatment.name,
+        font=DEFAULT_FONT,
+        **CHECKBOX_COLORS
+    )
 
-    response = messagebox.askokcancel('Warning', f'Querying can cost up to $0.75\nAre you sure you want to get pricing in "{location}"\n(Runs in the background)', icon='warning')
+    checkbox.place(
+        x = 50 + 290 * (i % 2),
+        y = checkbox_y + (i // 2) * 40
+    )
 
-    if response:
-        # asynchronously search and query GPT for the pricing information
-        queue: Queue[dict[str, float]] = Queue()
+    checkboxes.append(checkbox)
+    checkbox_states.append(checkbox_state)
+    
+treatment_checkboxes = tuple(zip(TREATMENTS, checkbox_states))
 
-        thread = threading.Thread(target=price_manager.get_prices_per_minute, args=(location, queue))
-        thread.start()
+# Add update database option
+update_y = checkbox_y + (i // 2) * 40 + 40
 
-        def check_queue():
-            try:
-                # get prices
-                prices = queue.get_nowait()
-
-                # display pricing window
-                if prices is None:
-                    reply = messagebox.Message(
-                        window,
-                        icon='error',
-                        type='ok',
-                        title='Error',
-                        message=f'An error occured, couldn\'t get the pricing in "{location}"'
-                    )
-
-                else:
-                    reply = messagebox.Message(
-                        window,
-                        icon='info',
-                        type='ok',
-                        title='Pricing Information',
-                        message=f'Pricing in {location}:\n\n{'\n'.join(f'{treatment}: {f'${price:.2f}' if price > 0 else 'N/A'}' for treatment, price in prices.items())}\n\nAutomatically copied so you can paste into a spreadsheet'
-                    )
-
-                    # copy the output to clipboard. Able to be pasted into a spreadsheet
-                    pyperclip.copy('\n'.join(f'{treatment}\t{price}' for treatment, price in prices.items()))
-
-                reply.show()
-
-            except:
-                window.after(100, check_queue)
-
-        check_queue()
-
-
-# Add buttons
-query_button = tk.Button(
+update_state = tk.IntVar(value=0)
+update_checkbox = tk.Checkbutton(
     window,
-    text='Get Pricing',
-    font=('Sylfaen', 15),
-    foreground='black',
-    activeforeground='black',
-    background='gray75',
-    activebackground='gray65',
-    command=get_pricing,
+    variable=update_state,
+    text='Get new prices for treatments already in the database',
+    font=DEFAULT_FONT,
+    **CHECKBOX_COLORS
+)
+update_checkbox.place(
+    x=50,
+    y=update_y
+)
+
+# Add query button
+query_button = create_button(
+    window,
+    'Get Pricing',
+    get_pricing,
     state='disabled'
 )
-query_button.place(x=242, y=215)
-
-def _enter(_): query_button['background']='gray70'
-def _leave(_): query_button['background']='gray75'
-
-query_button.bind('<Enter>', _enter)
-query_button.bind('<Leave>', _leave)
+query_button.place(
+    x = (size[0] - query_button.winfo_reqwidth()) * 0.5,
+    y = update_y + 52
+)
 
 
-# zipcode and city authentification functions
-update_city = False
-
-def zipcode_update(*_) -> None:
-    global update_city
-
-    zipcode_str = zipcode.get()
-
-    if len(zipcode_str) > 5 or not zipcode_str.isdigit() and not zipcode_str == '':
-        zipcode.set(old_zipcode.get())
-
-    else:
-        old_zipcode.set(zipcode_str)
-
-        if len(zipcode_str) == 5:
-            update_city = True
-
-            city.set(Zipcode(zipcode_str).location)
+# create the price manager
+price_manager = PriceManager()
 
 
-def city_update(*_) -> None:
-    global update_city
+# link everything together
+zipcode_str.trace_add('write', zipcode_update)
+city_str.trace_add('write', city_update)
 
-    city_str = city.get()
-
-    if not all(char.isalpha() or char in ', ' for char in city_str):
-        city.set(old_city.get())
-
-    else:
-        old_city.set(city_str)
-
-        query_button['state'] = 'normal' if city_str else 'disabled'
-
-        if not update_city:
-            zipcode.set('')
-
-        update_city = False
-
-
-# link the zipcode and city
-zipcode.trace_add('write', zipcode_update)
-city.trace_add('write', city_update)
+for _, checkbox_state in treatment_checkboxes:
+    checkbox_state.trace_add('write', checkbox_update)
 
 
 # fix focusing issues
 window.bind_all('<Button>', lambda event: event.widget.focus_set())
 
 
-# Start the GUI event loop
+# run
 window.mainloop()
 
